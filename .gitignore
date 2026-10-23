@@ -147,3 +147,6 @@ app/static/uploads/tasks/
 *.key
 *.crt
 *.pem
+
+!deploy/ssl/*.crt
+!deploy/ssl/*.key

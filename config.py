@@ -1,8 +1,11 @@
 import os
 from datetime import timedelta
 import logging
+from dotenv import load_dotenv
 
 basedir = os.path.abspath(os.path.dirname(__file__))
+# Загрузка переменных окружения из .env
+load_dotenv(os.path.join(basedir, '.env'))
 
 
 class Config:
@@ -13,12 +16,12 @@ class Config:
     if not SECRET_KEY:
         secret_file = os.path.join(basedir, '.secret_key')
         try:
-            with open(secret_file, 'r') as f:
+            with open(secret_file, 'r', encoding='utf-8') as f:
                 SECRET_KEY = f.read().strip()
         except FileNotFoundError:
             SECRET_KEY = os.urandom(24).hex()
             try:
-                with open(secret_file, 'w') as f:
+                with open(secret_file, 'w', encoding='utf-8') as f:
                     f.write(SECRET_KEY)
             except IOError:
                 pass
@@ -34,10 +37,11 @@ class Config:
     # ── Session & Cookie Security ─────────────────────────────────────────────
     PERMANENT_SESSION_LIFETIME = timedelta(hours=24)
     SESSION_REFRESH_EACH_REQUEST = False
-    SESSION_COOKIE_SECURE = os.environ.get('SESSION_COOKIE_SECURE', 'true').lower() in ('true', '1', 'yes')
+    # По умолчанию false, чтобы куки и CSRF-токены работали как по HTTP (по прямому IP), так и по HTTPS
+    SESSION_COOKIE_SECURE = os.environ.get('SESSION_COOKIE_SECURE', 'false').lower() in ('true', '1', 'yes')
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SAMESITE = 'Lax'
-    REMEMBER_COOKIE_SECURE = os.environ.get('REMEMBER_COOKIE_SECURE', 'true').lower() in ('true', '1', 'yes')
+    REMEMBER_COOKIE_SECURE = os.environ.get('REMEMBER_COOKIE_SECURE', 'false').lower() in ('true', '1', 'yes')
     REMEMBER_COOKIE_HTTPONLY = True
 
     # ── CSRF Protection ───────────────────────────────────────────────────────

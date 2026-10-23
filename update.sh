@@ -186,6 +186,15 @@ chmod -R 775 "$APP_DIR/app/static/uploads" 2>/dev/null || true
 chmod -R 775 "$APP_DIR/backups" 2>/dev/null || true
 [ -f "$APP_DIR/reports.db" ] && chmod 664 "$APP_DIR/reports.db"
 
+# Проверка и установка SSL-сертификатов copp82.ru
+if [ -f "$APP_DIR/deploy/ssl/copp82.ru.fullchain.crt" ] && [ -f "$APP_DIR/deploy/ssl/copp82.ru.key" ]; then
+    info "Устанавливаю рабочие SSL-сертификаты copp82.ru..."
+    cp "$APP_DIR/deploy/ssl/copp82.ru.fullchain.crt" /etc/ssl/certs/copp82.ru.fullchain.crt
+    cp "$APP_DIR/deploy/ssl/copp82.ru.key" /etc/ssl/private/copp82.ru.key
+    chmod 644 /etc/ssl/certs/copp82.ru.fullchain.crt
+    chmod 600 /etc/ssl/private/copp82.ru.key
+fi
+
 touch /var/log/${SERVICE_NAME}_error.log /var/log/${SERVICE_NAME}_access.log
 chown "$APP_USER":"$APP_USER" /var/log/${SERVICE_NAME}_error.log /var/log/${SERVICE_NAME}_access.log
 

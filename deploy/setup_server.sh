@@ -354,7 +354,10 @@ else
     exit 1
 fi
 
-SERVER_IP=$(curl -s -4 ifconfig.me || curl -s -4 icanhazip.com || echo "$SERVER_IP_FALLBACK")
+SERVER_IP=$(curl -s -m 3 -4 https://api.ipify.org 2>/dev/null || curl -s -m 3 -4 https://icanhazip.com 2>/dev/null || echo "$SERVER_IP_FALLBACK")
+if [[ ! "$SERVER_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    SERVER_IP="$SERVER_IP_FALLBACK"
+fi
 
 echo ""
 echo -e "${BOLD}${GREEN}════════════════════════════════════════════════════════════${NC}"
