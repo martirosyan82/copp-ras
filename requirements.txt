@@ -9,3 +9,4 @@ xlrd
 Flask-Limiter
 Flask-Migrate
 gunicorn
+python-dotenv

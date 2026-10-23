@@ -1,11 +1,13 @@
 import os
 from datetime import timedelta
 import logging
-from dotenv import load_dotenv
-
 basedir = os.path.abspath(os.path.dirname(__file__))
-# Загрузка переменных окружения из .env
-load_dotenv(os.path.join(basedir, '.env'))
+# Загрузка переменных окружения из .env (если установлен python-dotenv)
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(basedir, '.env'))
+except ImportError:
+    pass
 
 
 class Config:
