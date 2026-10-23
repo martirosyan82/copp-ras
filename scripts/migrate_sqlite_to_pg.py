@@ -107,15 +107,15 @@ def parse_val(table_name, col_name, val):
     return val
 
 
-def migrate():
-    sqlite_path = sys.argv[1] if len(sys.argv) > 1 else os.path.join(basedir, 'reports.db')
+def migrate_data(sqlite_path=None, pg_url=None):
+    """
+    Программная функция переноса данных из SQLite в PostgreSQL.
+    Может вызываться как из мастера /setup/upload, так и из CLI.
+    """
+    if not sqlite_path:
+        sqlite_path = os.path.join(basedir, 'reports.db')
 
-    # Читаем целевой URL PostgreSQL
-    pg_url = None
-    if len(sys.argv) > 2:
-        pg_url = sys.argv[2]
-    else:
-        # Проверяем .env
+    if not pg_url:
         env_file = os.path.join(basedir, '.env')
         if os.path.exists(env_file):
             with open(env_file, 'r', encoding='utf-8') as f:
@@ -126,17 +126,13 @@ def migrate():
                         break
 
     if not pg_url or not pg_url.startswith(('postgresql://', 'postgres://')):
-        print("[ОШИБКА] Не указан DATABASE_URL для PostgreSQL!")
-        print("Задайте его в .env или передайте аргументом:")
-        print("  python scripts/migrate_sqlite_to_pg.py reports.db postgresql://user:pass@localhost:5432/copp_ras_db")
-        sys.exit(1)
+        raise ValueError("Не указан валидный DATABASE_URL для PostgreSQL")
 
     if pg_url.startswith('postgres://'):
         pg_url = pg_url.replace('postgres://', 'postgresql://', 1)
 
     if not os.path.exists(sqlite_path):
-        print(f"[ОШИБКА] Исходный файл SQLite не найден: {sqlite_path}")
-        sys.exit(1)
+        raise FileNotFoundError(f"Исходный файл SQLite не найден: {sqlite_path}")
 
     print("=" * 65)
     print("  МИГРАЦИЯ ДАННЫХ COPP-RAS: SQLite -> PostgreSQL")
@@ -189,7 +185,6 @@ def migrate():
     print("\nНачинаю перенос данных:\n")
 
     with pg_engine.begin() as pg_conn:
-        # Отключаем триггеры внешних ключей на время вставки
         for table_name in TABLE_ORDER:
             if table_name not in sqlite_tables or table_name not in pg_tables:
                 continue
@@ -202,7 +197,7 @@ def migrate():
             row_count = len(rows)
 
             if row_count == 0:
-                print(f"  ► {table_name:<24} 0 строк (пусто)")
+                print(f"  > {table_name:<24} 0 строк (пусто)")
                 continue
 
             # Подготавливаем данные
@@ -245,7 +240,17 @@ def migrate():
     print("\n" + "=" * 65)
     print(f"  УСПЕШНО ПЕРЕНЕСЕНО ЗАПИСЕЙ: {total_records}")
     print("=" * 65)
-    print("База данных PostgreSQL готова к полноценной работе!")
+    return total_records
+
+
+def migrate():
+    sqlite_path = sys.argv[1] if len(sys.argv) > 1 else None
+    pg_url = sys.argv[2] if len(sys.argv) > 2 else None
+    try:
+        migrate_data(sqlite_path, pg_url)
+    except Exception as e:
+        print(f"[ОШИБКА] {e}")
+        sys.exit(1)
 
 
 if __name__ == '__main__':

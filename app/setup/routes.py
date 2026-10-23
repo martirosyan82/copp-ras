@@ -93,7 +93,17 @@ def upload():
             # Применяем миграцию недостающих колонок если нужно
             _apply_migrations(current_app)
 
-            if not is_db_ready(db_path):
+            # Если приложение работает на PostgreSQL, синхронизируем данные в PostgreSQL
+            db_uri = current_app.config.get('SQLALCHEMY_DATABASE_URI', '')
+            if db_uri.startswith(('postgresql://', 'postgres://')):
+                try:
+                    from scripts.migrate_sqlite_to_pg import migrate_data
+                    migrate_data(db_path, db_uri)
+                except Exception as e:
+                    logger.exception("Ошибка переноса в PostgreSQL")
+                    return jsonify({'success': False, 'message': f'Ошибка переноса в PostgreSQL: {e}'}), 500
+
+            if not is_db_ready():
                 return jsonify({
                     'success': False,
                     'message': 'Файл загружен, но в базе отсутствуют обязательные таблицы или учетная запись администратора'
@@ -217,7 +227,17 @@ def upload():
             # Применяем миграции недостающих колонок если необходимо
             _apply_migrations(current_app)
 
-            if not is_db_ready(db_path):
+            # Если приложение работает на PostgreSQL, синхронизируем данные в PostgreSQL
+            db_uri = current_app.config.get('SQLALCHEMY_DATABASE_URI', '')
+            if db_uri.startswith(('postgresql://', 'postgres://')):
+                try:
+                    from scripts.migrate_sqlite_to_pg import migrate_data
+                    migrate_data(db_path, db_uri)
+                except Exception as e:
+                    logger.exception("Ошибка переноса в PostgreSQL")
+                    return jsonify({'success': False, 'message': f'Ошибка переноса в PostgreSQL: {e}'}), 500
+
+            if not is_db_ready():
                 return jsonify({
                     'success': False,
                     'message': 'Архив распакован, но база данных не содержит обязательных таблиц или учетной записи администратора'
