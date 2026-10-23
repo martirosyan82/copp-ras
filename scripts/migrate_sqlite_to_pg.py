@@ -80,11 +80,13 @@ def parse_val(table_name, col_name, val):
 
     # Обработка JSON
     if col_name in JSON_COLUMNS.get(table_name, []):
+        if not val:
+            return None
         if isinstance(val, str):
             try:
                 return json.loads(val)
             except Exception:
-                return val
+                return None
         return val
 
     # Обработка Boolean
@@ -93,6 +95,8 @@ def parse_val(table_name, col_name, val):
 
     # Обработка DateTime / Date
     if col_name in DATETIME_COLUMNS.get(table_name, []):
+        if not val or val == '':
+            return None
         if isinstance(val, str):
             for fmt in ('%Y-%m-%d %H:%M:%S.%f', '%Y-%m-%d %H:%M:%S', '%Y-%m-%d'):
                 try:
@@ -179,14 +183,18 @@ def migrate_data(sqlite_path=None, pg_url=None):
     metadata = MetaData()
     metadata.reflect(bind=pg_engine)
 
-    # Каскадная очистка всех таблиц перед переносом
-    try:
-        with pg_engine.begin() as clean_conn:
-            existing_tables = [f'"{t}"' for t in reversed(TABLE_ORDER) if t in pg_tables]
-            if existing_tables:
-                clean_conn.execute(text(f"TRUNCATE TABLE {', '.join(existing_tables)} CASCADE;"))
-    except Exception as e:
-        print(f"  [ИНФО] Очистка таблиц через DELETE: {e}")
+    # Очистка таблиц перед переносом
+    existing_tables = [f'"{t}"' for t in reversed(TABLE_ORDER) if t in pg_tables]
+    if existing_tables:
+        try:
+            with pg_engine.begin() as clean_conn:
+                clean_conn.execute(text(f"TRUNCATE TABLE {', '.join(existing_tables)} RESTART IDENTITY CASCADE;"))
+        except Exception as e:
+            print(f"  [ИНФО] TRUNCATE не удался ({e}), очищаю таблицы через DELETE в обратном порядке...")
+            with pg_engine.begin() as clean_conn:
+                for t in reversed(TABLE_ORDER):
+                    if t in pg_tables:
+                        clean_conn.execute(text(f'DELETE FROM "{t}";'))
 
     total_records = 0
 
@@ -194,12 +202,6 @@ def migrate_data(sqlite_path=None, pg_url=None):
     print("\nНачинаю перенос данных:\n")
 
     with pg_engine.begin() as pg_conn:
-        # Отключаем проверку внешних ключей на время массовой вставки
-        try:
-            pg_conn.execute(text("SET session_replication_role = 'replica';"))
-        except Exception:
-            pass
-
         for table_name in TABLE_ORDER:
             if table_name not in sqlite_tables or table_name not in pg_tables:
                 continue
@@ -229,12 +231,6 @@ def migrate_data(sqlite_path=None, pg_url=None):
             total_records += row_count
             print(f"  [OK] {table_name:<22} перенесено: {row_count:>5} строк")
 
-        # Включаем проверку внешних ключей обратно
-        try:
-            pg_conn.execute(text("SET session_replication_role = 'origin';"))
-        except Exception:
-            pass
-
         # 4. Обновление sequence (автоинкрементов) для таблиц с полем id
         print("\nОбновление системных автоинкрементов (Sequences) в PostgreSQL...")
         for table_name in TABLE_ORDER:
@@ -242,15 +238,19 @@ def migrate_data(sqlite_path=None, pg_url=None):
                 target_table = Table(table_name, metadata, autoload_with=pg_engine)
                 if 'id' in [c.name for c in target_table.columns]:
                     try:
-                        seq_sql = text(f"""
-                            SELECT setval(
-                                pg_get_serial_sequence('{table_name}', 'id'),
-                                coalesce(max(id), 1)
-                            ) FROM {table_name};
-                        """)
-                        pg_conn.execute(seq_sql)
-                    except Exception:
-                        pass
+                        seq_res = pg_conn.execute(
+                            text(f"SELECT pg_get_serial_sequence('{table_name}', 'id')")
+                        ).scalar()
+                        if seq_res:
+                            pg_conn.execute(text(f"""
+                                SELECT setval(
+                                    '{seq_res}',
+                                    coalesce((SELECT max(id) FROM "{table_name}"), 1),
+                                    (SELECT max(id) IS NOT NULL FROM "{table_name}")
+                                );
+                            """))
+                    except Exception as seq_err:
+                        print(f"  [WARN] Ошибка обновления sequence для {table_name}: {seq_err}")
 
     sqlite_conn.close()
     pg_engine.dispose()
