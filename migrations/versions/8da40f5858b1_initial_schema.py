@@ -1,4 +1,4 @@
-"""initial_schema
+﻿"""initial_schema
 
 Revision ID: 8da40f5858b1
 Revises: 
@@ -36,8 +36,8 @@ def upgrade():
     )
     op.create_table('report_templates',
     sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('name', sa.String(length=256), nullable=True),
-    sa.Column('short_name', sa.String(length=64), nullable=True),
+    sa.Column('name', sa.String(length=1024), nullable=True),
+    sa.Column('short_name', sa.String(length=256), nullable=True),
     sa.Column('period', sa.String(length=128), nullable=True),
     sa.Column('period_data', sa.JSON(), nullable=True),
     sa.Column('deadline', sa.Date(), nullable=True),
@@ -106,7 +106,7 @@ def upgrade():
     )
     op.create_table('background_tasks',
     sa.Column('id', sa.String(length=36), nullable=False),
-    sa.Column('name', sa.String(length=128), nullable=True),
+    sa.Column('name', sa.String(length=512), nullable=True),
     sa.Column('status', sa.String(length=20), nullable=True),
     sa.Column('result_path', sa.String(length=256), nullable=True),
     sa.Column('error_message', sa.Text(), nullable=True),

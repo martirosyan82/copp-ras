@@ -1,15 +1,15 @@
-"""app/models/report.py — Шаблоны, сданные отчёты и черновики."""
+﻿"""app/models/report.py вЂ” РЁР°Р±Р»РѕРЅС‹, СЃРґР°РЅРЅС‹Рµ РѕС‚С‡С‘С‚С‹ Рё С‡РµСЂРЅРѕРІРёРєРё."""
 from app.extensions import db
 from sqlalchemy import JSON
 from datetime import datetime
 from app.models.files import report_attachments
 
 class ReportTemplate(db.Model):
-    """Шаблон отчёта. Структура полей хранится в schema (JSON)."""
+    """РЁР°Р±Р»РѕРЅ РѕС‚С‡С‘С‚Р°. РЎС‚СЂСѓРєС‚СѓСЂР° РїРѕР»РµР№ С…СЂР°РЅРёС‚СЃСЏ РІ schema (JSON)."""
     __tablename__ = 'report_templates'
     id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(256))
-    short_name = db.Column(db.String(64))
+    name = db.Column(db.String(1024))
+    short_name = db.Column(db.String(256))
     period = db.Column(db.String(128))
     period_data = db.Column(JSON, nullable=True)
     deadline = db.Column(db.Date)
@@ -24,7 +24,7 @@ class ReportTemplate(db.Model):
     )
 
 class ReportSubmission(db.Model):
-    """Заполненный отчёт пользователя."""
+    """Р—Р°РїРѕР»РЅРµРЅРЅС‹Р№ РѕС‚С‡С‘С‚ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ."""
     __tablename__ = 'report_submissions'
     id = db.Column(db.Integer, primary_key=True)
     template_id = db.Column(db.Integer, db.ForeignKey('report_templates.id'))
@@ -41,7 +41,7 @@ class ReportSubmission(db.Model):
     returned_by = db.relationship('User', foreign_keys=[returned_by_id])
 
 class ReportDraft(db.Model):
-    """Облачный черновик отчёта. Один на пару (user, template)."""
+    """РћР±Р»Р°С‡РЅС‹Р№ С‡РµСЂРЅРѕРІРёРє РѕС‚С‡С‘С‚Р°. РћРґРёРЅ РЅР° РїР°СЂСѓ (user, template)."""
     __tablename__ = 'report_drafts'
     id = db.Column(db.Integer, primary_key=True)
     template_id = db.Column(db.Integer, db.ForeignKey('report_templates.id'), nullable=False)
@@ -54,8 +54,8 @@ class ReportDraft(db.Model):
 
 class ManualRow(db.Model):
     """
-    Ручные строки в сводной таблице для организаций, которых нет в системе.
-    Не привязаны к учётной записи пользователя.
+    Р СѓС‡РЅС‹Рµ СЃС‚СЂРѕРєРё РІ СЃРІРѕРґРЅРѕР№ С‚Р°Р±Р»РёС†Рµ РґР»СЏ РѕСЂРіР°РЅРёР·Р°С†РёР№, РєРѕС‚РѕСЂС‹С… РЅРµС‚ РІ СЃРёСЃС‚РµРјРµ.
+    РќРµ РїСЂРёРІСЏР·Р°РЅС‹ Рє СѓС‡С‘С‚РЅРѕР№ Р·Р°РїРёСЃРё РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ.
     """
     __tablename__ = 'manual_rows'
     id = db.Column(db.Integer, primary_key=True)

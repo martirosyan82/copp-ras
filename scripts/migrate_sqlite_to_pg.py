@@ -171,6 +171,15 @@ def migrate():
         pg_tables = set(inspector.get_table_names())
         print("[OK] Схема PostgreSQL успешно создана.")
 
+    # Автоматическое расширение длины колонок для существующих таблиц в PostgreSQL
+    try:
+        with pg_engine.begin() as conn:
+            conn.execute(text("ALTER TABLE report_templates ALTER COLUMN name TYPE VARCHAR(1024);"))
+            conn.execute(text("ALTER TABLE report_templates ALTER COLUMN short_name TYPE VARCHAR(256);"))
+            conn.execute(text("ALTER TABLE background_tasks ALTER COLUMN name TYPE VARCHAR(512);"))
+    except Exception:
+        pass
+
     metadata = MetaData()
     metadata.reflect(bind=pg_engine)
 

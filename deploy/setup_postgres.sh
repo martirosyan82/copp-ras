@@ -144,6 +144,7 @@ info "Развертываю структуру таблиц в PostgreSQL..."
 cd "$APP_DIR"
 export FLASK_APP="wsgi:app"
 "$APP_DIR/venv/bin/flask" db upgrade
+sudo -u postgres psql -d "$DB_NAME" -c "ALTER TABLE report_templates ALTER COLUMN name TYPE VARCHAR(1024); ALTER TABLE report_templates ALTER COLUMN short_name TYPE VARCHAR(256); ALTER TABLE background_tasks ALTER COLUMN name TYPE VARCHAR(512);" 2>/dev/null || true
 info "Все таблицы и индексы успешно созданы в PostgreSQL."
 
 # ─── 5. ПЕРЕНОС ДАННЫХ ИЗ SQLITE ──────────────────────────────────────────────
