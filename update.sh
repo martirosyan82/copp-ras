@@ -1,20 +1,39 @@
 #!/bin/bash
 
 # ==============================================================================
-# update.sh — Быстрое обновление сайта copp-ras (git pull + restart)
+# update.sh — Быстрое и безопасное обновление COPP-RAS на сервере
+#
+# Что делает скрипт:
+#   1. Создает резервную копию базы данных в backups/ и во временную память
+#   2. Стягивает свежий код из ветки main
+#   3. Восстанавливает рабочую базу данных (защита от затирания гитом)
+#   4. Обновляет зависимости Python (если изменился requirements.txt)
+#   5. Проверяет и применяет миграции колонок в БД
+#   6. Выставляет корректные права доступа (www-data:www-data, 755/664/775)
+#   7. Перезапускает Gunicorn сервис и перезагружает Nginx
+#
 # Использование: sudo bash update.sh [--hard] [--no-restart]
 # ==============================================================================
 
-APP_DIR="/var/www/copp-ras"
-APP_USER="www-data"
-SERVICE_NAME="copp-ras"
+set -euo pipefail
 
-# ─── ЦВЕТА ────────────────────────────────────────────────────────────────────
-GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; CYAN='\033[0;36m'; NC='\033[0m'
+# ─── ЦВЕТА И ВЫВОД ────────────────────────────────────────────────────────────
+GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
 info()    { echo -e "${GREEN}[OK]${NC}    $*"; }
 warn()    { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 error()   { echo -e "${RED}[ERROR]${NC} $*"; }
-section() { echo -e "\n${CYAN}▶ $*${NC}"; }
+section() { echo -e "\n${CYAN}════════════════════════════════════════════════════════════${NC}\n${CYAN}▶ $*${NC}\n${CYAN}════════════════════════════════════════════════════════════${NC}"; }
+
+# ─── ОПРЕДЕЛЕНИЕ ПУТЕЙ И СЛУЖБ ────────────────────────────────────────────────
+if [ -d "/var/www/copp-ras" ]; then
+    APP_DIR="/var/www/copp-ras"
+else
+    APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fi
+
+SERVICE_NAME="copp-ras"
+APP_USER="www-data"
+BRANCH="main"
 
 # ─── АРГУМЕНТЫ ────────────────────────────────────────────────────────────────
 NO_RESTART=false
@@ -28,53 +47,72 @@ done
 
 # ─── ПРОВЕРКИ ─────────────────────────────────────────────────────────────────
 if [ "$EUID" -ne 0 ]; then
-    error "Запустите с правами root: sudo bash update.sh"
+    error "Запустите скрипт с правами root: sudo bash update.sh"
     exit 1
 fi
 
-if [ ! -d "$APP_DIR/.git" ]; then
-    warn "Папка .git не найдена! Восстанавливаю привязку к репозиторию..."
-    cd "$APP_DIR"
-    git init
-    git remote add origin https://github.com/NKVD2023/copp-ras.git
-fi
-
 START_TIME=$(date +%s)
-echo ""
-echo -e "${CYAN}══════════════════════════════════════════${NC}"
-echo -e "${CYAN}  Обновление COPP-RAS — $(date '+%d.%m.%Y %H:%M')${NC}"
-echo -e "${CYAN}══════════════════════════════════════════${NC}"
+echo -e "${BOLD}${CYAN}"
+echo "════════════════════════════════════════════════════════════"
+echo "  COPP-RAS — Обновление приложения $(date '+%d.%m.%Y %H:%M')"
+echo "════════════════════════════════════════════════════════════"
+echo -e "${NC}"
 
-# ─── 1. GIT PULL И ЗАЩИТА БД ────────────────────────────────────────────────────
-section "1/5  Получение обновлений с GitHub"
-cd "$APP_DIR"
-
-# ЗАЩИТА БАЗЫ ДАННЫХ: сохраняем её во временную папку до работы Git
-if [ -f "$APP_DIR/reports.db" ]; then
-    info "Создаю резервную копию базы данных перед обновлением..."
-    cp "$APP_DIR/reports.db" /tmp/copp_reports_backup_deploy.db
+# Подхват SSH-ключа для Git (если репозиторий клонирован по SSH)
+CANDIDATE_KEYS=("/root/.ssh/id_ed25519" "/root/.ssh/id_rsa" "/root/.ssh/id_new")
+if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
+    USER_HOME=$(eval echo "~$SUDO_USER")
+    CANDIDATE_KEYS+=("$USER_HOME/.ssh/id_ed25519" "$USER_HOME/.ssh/id_rsa" "$USER_HOME/.ssh/id_new")
 fi
 
-# Фикс ошибки "fatal: detected dubious ownership" (если запускаем через sudo)
-git config --global --add safe.directory "$APP_DIR"
+SSH_KEY_FOUND=""
+for key in "${CANDIDATE_KEYS[@]}"; do
+    if [ -f "$key" ]; then
+        SSH_KEY_FOUND="$key"
+        break
+    fi
+done
+
+if [ -n "$SSH_KEY_FOUND" ]; then
+    export GIT_SSH_COMMAND="ssh -i $SSH_KEY_FOUND -o StrictHostKeyChecking=no"
+    info "Используется SSH-ключ: $SSH_KEY_FOUND"
+else
+    export GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no"
+fi
+
+cd "$APP_DIR" || exit 1
+git config --global --add safe.directory "$APP_DIR" 2>/dev/null || true
+
+# ─── 1. СОЗДАНИЕ РЕЗЕРВНОЙ КОПИИ БАЗЫ ДАННЫХ ──────────────────────────────────
+section "1/5. Резервное копирование рабочей базы данных"
+
+BACKUP_DIR="$APP_DIR/backups"
+mkdir -p "$BACKUP_DIR"
+TEMP_DB_BACKUP="/tmp/copp_reports_pre_update_$START_TIME.db"
+PERM_DB_BACKUP="$BACKUP_DIR/reports_before_update_$(date +%Y%m%d_%H%M%S).db"
+
+if [ -f "$APP_DIR/reports.db" ] && [ -s "$APP_DIR/reports.db" ]; then
+    cp "$APP_DIR/reports.db" "$TEMP_DB_BACKUP"
+    cp "$APP_DIR/reports.db" "$PERM_DB_BACKUP"
+    info "Резервная копия сохранена в $PERM_DB_BACKUP"
+else
+    warn "Рабочая база данных reports.db отсутствует (режим Zero-DB)."
+fi
+
+# ─── 2. СТЯГИВАНИЕ ОБНОВЛЕНИЙ ИЗ GIT ──────────────────────────────────────────
+section "2/5. Получение свежего кода из Git ($BRANCH)"
 
 OLD_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
-if [ "$HARD_RESET" = true ]; then
-    warn "Режим --hard: сбрасываю все локальные изменения..."
-    git fetch origin
-    git reset --hard origin/main
-else
-    # Сервер всегда работает на ветке main (продакшн)
-    git fetch origin
-    git checkout main 2>/dev/null || true
-    git reset --hard origin/main
-fi
+git fetch origin "$BRANCH"
+git checkout "$BRANCH" 2>/dev/null || true
+git reset --hard "origin/$BRANCH"
 
-# ЗАЩИТА БАЗЫ ДАННЫХ: возвращаем её обратно, перезаписывая ту, что пришла из Git
-if [ -f /tmp/copp_reports_backup_deploy.db ]; then
-    info "Восстанавливаю рабочую базу данных..."
-    mv /tmp/copp_reports_backup_deploy.db "$APP_DIR/reports.db"
+# Восстанавливаем рабочую БД, чтобы Git не перетер её
+if [ -f "$TEMP_DB_BACKUP" ]; then
+    cp "$TEMP_DB_BACKUP" "$APP_DIR/reports.db"
+    rm -f "$TEMP_DB_BACKUP"
+    info "Рабочая база данных reports.db восстановлена."
 fi
 
 NEW_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
@@ -82,124 +120,105 @@ NEW_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 if [ "$OLD_COMMIT" = "$NEW_COMMIT" ]; then
     warn "Код уже актуален (коммит: $NEW_COMMIT). Новых изменений нет."
 else
-    info "Код обновлён: $OLD_COMMIT → $NEW_COMMIT"
+    info "Код обновлен: $OLD_COMMIT -> $NEW_COMMIT"
     echo ""
-    echo "  Изменённые файлы:"
-    git diff --name-only "$OLD_COMMIT" "$NEW_COMMIT" 2>/dev/null | sed 's/^/    ► /' || true
+    echo "  Измененные файлы:"
+    git diff --name-only "$OLD_COMMIT" "$NEW_COMMIT" 2>/dev/null | sed 's/^/    > /' || true
 fi
 
-# Страховка: создаём wsgi.py если он вдруг пропал
-if [ ! -f "$APP_DIR/wsgi.py" ]; then
-    warn "wsgi.py не найден — создаю..."
-    cat > "$APP_DIR/wsgi.py" << 'WSGIEOF'
-from run import app
+# ─── 3. ОБНОВЛЕНИЕ ЗАВИСИМОСТЕЙ PYTHON ─────────────────────────────────────────
+section "3/5. Проверка зависимостей Python (venv)"
 
-if __name__ == "__main__":
-    app.run()
-WSGIEOF
-    info "wsgi.py создан."
+VENV_PIP="$APP_DIR/venv/bin/pip"
+VENV_PYTHON="$APP_DIR/venv/bin/python"
+
+if [ ! -d "$APP_DIR/venv" ]; then
+    info "Создаю виртуальное окружение venv..."
+    python3 -m venv "$APP_DIR/venv"
 fi
 
-# ─── 2. ЗАВИСИМОСТИ ───────────────────────────────────────────────────────────
-section "2/5  Зависимости Python"
-
-# Устанавливаем только если requirements.txt изменился
-if [ "$OLD_COMMIT" != "$NEW_COMMIT" ] && \
-   git diff --name-only "$OLD_COMMIT" "$NEW_COMMIT" 2>/dev/null | grep -q "requirements.txt"; then
-    info "requirements.txt изменился — устанавливаю..."
-    "$APP_DIR/venv/bin/pip" install --upgrade pip --quiet
-    "$APP_DIR/venv/bin/pip" install -r requirements.txt --quiet
-    "$APP_DIR/venv/bin/pip" install gunicorn python-dotenv --quiet
-    info "Зависимости обновлены."
+if [ "$OLD_COMMIT" != "$NEW_COMMIT" ] && git diff --name-only "$OLD_COMMIT" "$NEW_COMMIT" 2>/dev/null | grep -q "requirements.txt"; then
+    info "requirements.txt изменился — обновляю пакеты..."
+    "$VENV_PIP" install --upgrade pip --quiet
+    "$VENV_PIP" install -r "$APP_DIR/requirements.txt" --quiet
+    "$VENV_PIP" install gunicorn python-dotenv --quiet
+    info "Пакеты успешно обновлены."
 else
-    info "requirements.txt не изменился — пропускаю установку."
+    info "requirements.txt без изменений, пропуск."
 fi
 
-# ─── 3. МИГРАЦИИ И ОБНОВЛЕНИЕ ДАННЫХ ────────────────────────────────────────────
-section "3/5  Миграции БД и системные скрипты"
+# ─── 4. МИГРАЦИИ СХЕМЫ БД ──────────────────────────────────────────────────────
+section "4/5. Проверка колонок и миграций БД"
 
-if [ -f "$APP_DIR/upgrade_db.py" ]; then
-    info "Применение структуры базы данных..."
-    "$APP_DIR/venv/bin/python" "$APP_DIR/upgrade_db.py" || warn "Не удалось обновить структуру БД."
+if [ -f "$APP_DIR/reports.db" ] && [ -s "$APP_DIR/reports.db" ]; then
+    # Проверка наличия колонки subgroup в users
+    "$VENV_PYTHON" -c "
+import sqlite3
+conn = sqlite3.connect('$APP_DIR/reports.db')
+cursor = conn.cursor()
+cursor.execute(\"PRAGMA table_info(users)\")
+cols = [col[1] for col in cursor.fetchall()]
+if 'subgroup' not in cols:
+    cursor.execute('ALTER TABLE users ADD COLUMN subgroup VARCHAR(100);')
+    conn.commit()
+cursor.execute(\"PRAGMA table_info(action_logs)\")
+cols_logs = [col[1] for col in cursor.fetchall()]
+if 'ip_address' not in cols_logs:
+    cursor.execute('ALTER TABLE action_logs ADD COLUMN ip_address VARCHAR(45);')
+    conn.commit()
+conn.close()
+" 2>/dev/null || true
+    info "Миграции колонок проверены."
 fi
 
-export FLASK_APP="$APP_DIR/run.py"
-if [ -d "$APP_DIR/migrations" ]; then
-    "$APP_DIR/venv/bin/flask" db upgrade 2>/dev/null || true
-fi
+# Создаем структуру каталогов загрузок если нет
+mkdir -p "$APP_DIR/app/uploads"
+mkdir -p "$APP_DIR/app/static/uploads"
+mkdir -p "$APP_DIR/backups"
 
-if [ -f "$APP_DIR/add_users.py" ]; then
-    info "Запуск скрипта add_users.py (обновление справочника)..."
-    "$APP_DIR/venv/bin/python" "$APP_DIR/add_users.py" || warn "Ошибка при выполнении add_users.py"
-fi
-
-if [ -f "$APP_DIR/migrate_viewer_to_manager.py" ]; then
-    info "Запуск миграции ролей (viewer -> manager)..."
-    "$APP_DIR/venv/bin/python" "$APP_DIR/migrate_viewer_to_manager.py" || warn "Ошибка при выполнении migrate_viewer_to_manager.py"
-fi
-
-if [ -f "$APP_DIR/add_background_tasks_table.py" ]; then
-    info "Создание таблицы background_tasks (если нет)..."
-    "$APP_DIR/venv/bin/python" "$APP_DIR/add_background_tasks_table.py" || warn "Ошибка при выполнении add_background_tasks_table.py"
-fi
-
-info "Проверка структуры таблицы action_logs (добавление ip_address)..."
-"$APP_DIR/venv/bin/python" -c "import sqlite3; conn = sqlite3.connect('$APP_DIR/reports.db'); conn.execute('ALTER TABLE action_logs ADD COLUMN ip_address VARCHAR(45);'); conn.commit(); conn.close()" 2>/dev/null || true
-
-# ─── 4. ПРАВА ДОСТУПА ─────────────────────────────────────────────────────────
-section "4/5  Права доступа"
+# ─── 5. ПРАВА ДОСТУПА И ПЕРЕЗАПУСК ────────────────────────────────────────────
+section "5/5. Права доступа и перезапуск сервисов"
 
 chown -R "$APP_USER":"$APP_USER" "$APP_DIR"
 chmod -R 755 "$APP_DIR"
-chmod 664 "$APP_DIR/reports.db" 2>/dev/null || true
+chmod -R 775 "$APP_DIR/app/uploads" 2>/dev/null || true
 chmod -R 775 "$APP_DIR/app/static/uploads" 2>/dev/null || true
+chmod -R 775 "$APP_DIR/backups" 2>/dev/null || true
+[ -f "$APP_DIR/reports.db" ] && chmod 664 "$APP_DIR/reports.db"
 
-# Убеждаемся что файлы логов существуют и принадлежат www-data
 touch /var/log/${SERVICE_NAME}_error.log /var/log/${SERVICE_NAME}_access.log
 chown "$APP_USER":"$APP_USER" /var/log/${SERVICE_NAME}_error.log /var/log/${SERVICE_NAME}_access.log
-
-info "Права расставлены."
-
-# ─── 5. ПЕРЕЗАПУСК ────────────────────────────────────────────────────────────
-section "5/5  Перезапуск сервисов"
 
 if [ "$NO_RESTART" = false ]; then
     systemctl restart "$SERVICE_NAME"
     sleep 2
 
     if systemctl is-active --quiet "$SERVICE_NAME"; then
-        info "Gunicorn перезапущен успешно."
+        info "Сервис $SERVICE_NAME успешно перезапущен!"
     else
-        error "Gunicorn НЕ запустился! Логи:"
-        journalctl -u "$SERVICE_NAME" --no-pager -n 30
+        error "Сервис $SERVICE_NAME не смог запуститься! Последние строки лога:"
+        journalctl -u "$SERVICE_NAME" --no-pager -n 25
         exit 1
     fi
 
-    # Перезагружаем Nginx только если изменились шаблоны или статика
+    # Перезагрузка Nginx при изменении шаблонов, статики или конфигурации
     if [ "$OLD_COMMIT" != "$NEW_COMMIT" ] && \
-       git diff --name-only "$OLD_COMMIT" "$NEW_COMMIT" 2>/dev/null | grep -qE "^app/static/|^app/templates/"; then
+       git diff --name-only "$OLD_COMMIT" "$NEW_COMMIT" 2>/dev/null | grep -qE "^app/static/|^app/templates/|^deploy/"; then
         if nginx -t 2>/dev/null; then
-            systemctl reload nginx
-            info "Nginx перезагружен (изменились шаблоны/статика)."
+            systemctl reload nginx 2>/dev/null || true
+            info "Nginx перезагружен."
         fi
     fi
 else
     warn "Перезапуск пропущен (--no-restart)."
 fi
 
-# ─── ИТОГ ─────────────────────────────────────────────────────────────────────
 END_TIME=$(date +%s)
 ELAPSED=$((END_TIME - START_TIME))
 
 echo ""
-echo -e "${GREEN}══════════════════════════════════════════${NC}"
-echo -e "${GREEN}  Готово! Время: ${ELAPSED}с  |  Коммит: $NEW_COMMIT${NC}"
-echo -e "${GREEN}══════════════════════════════════════════${NC}"
-echo ""
-ACTIVE=$(systemctl is-active "$SERVICE_NAME" 2>/dev/null || echo "unknown")
-echo "  Статус сервиса: $ACTIVE"
-echo ""
-echo "  Полезные команды:"
-echo "    sudo journalctl -u $SERVICE_NAME -f            # живые логи"
-echo "    sudo tail -f /var/log/${SERVICE_NAME}_error.log   # ошибки Flask"
+echo -e "${BOLD}${GREEN}════════════════════════════════════════════════════════════${NC}"
+echo -e "${BOLD}${GREEN}  ОБНОВЛЕНИЕ УСПЕШНО ЗАВЕРШЕНО ЗА ${ELAPSED}с!               ${NC}"
+echo -e "${BOLD}${GREEN}  Текущий коммит: $NEW_COMMIT                               ${NC}"
+echo -e "${BOLD}${GREEN}════════════════════════════════════════════════════════════${NC}"
 echo ""

@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Настройка платформы — ЦОПП РАС</title>
+    <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <style>
+        :root {
+            --copp-primary: #00334e;
+            --copp-primary-hover: #002235;
+            --copp-bg: #f4f7fa;
+            --border-color: #e2e8f0;
+        }
+        body {
+            background-color: var(--copp-bg);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 24px;
+            margin: 0;
+        }
+        .setup-card {
+            background: #ffffff;
+            border-radius: 16px;
+            box-shadow: 0 10px 40px rgba(0, 51, 78, 0.08);
+            border: 1px solid var(--border-color);
+            max-width: 920px;
+            width: 100%;
+            overflow: hidden;
+        }
+        .setup-header {
+            background: linear-gradient(135deg, var(--copp-primary) 0%, #001a28 100%);
+            color: #ffffff;
+            padding: 32px 40px;
+        }
+        .setup-body {
+            padding: 36px 40px;
+        }
+        .option-box {
+            border: 2px solid var(--border-color);
+            border-radius: 12px;
+            padding: 24px;
+            height: 100%;
+            transition: all 0.2s ease;
+            display: flex;
+            flex-direction: column;
+            background: #ffffff;
+        }
+        .option-box:hover {
+            border-color: var(--copp-primary);
+            box-shadow: 0 6px 20px rgba(0, 51, 78, 0.08);
+        }
+        .option-box.primary-option {
+            border-color: #b9d5e8;
+            background: #f8fbfe;
+        }
+        .file-dropzone {
+            border: 2px dashed #94a3b8;
+            border-radius: 10px;
+            padding: 24px 16px;
+            text-align: center;
+            background: #ffffff;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .file-dropzone:hover {
+            border-color: var(--copp-primary);
+            background: #edf5fa;
+        }
+        .btn-copp {
+            background-color: var(--copp-primary);
+            color: #ffffff;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-weight: 500;
+            transition: background 0.2s ease;
+        }
+        .btn-copp:hover {
+            background-color: var(--copp-primary-hover);
+            color: #ffffff;
+        }
+        .progress-box {
+            display: none;
+            margin-top: 20px;
+            padding: 16px;
+            background: #f8fafc;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+        }
+        .server-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            background: rgba(255, 255, 255, 0.15);
+            color: #ffffff;
+            backdrop-filter: blur(4px);
+        }
+    </style>
+</head>
+<body>
+
+<div class="setup-card">
+    <div class="setup-header">
+        <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+            <span class="server-badge">
+                <i class="bi bi-hdd-network"></i> Сервер готов (Ubuntu 24.04 / 26.04)
+            </span>
+            <span class="server-badge">
+                <i class="bi bi-shield-check"></i> Защита SSL активна
+            </span>
+            <span class="server-badge">
+                <i class="bi bi-lightning-charge"></i> Режим Zero-DB
+            </span>
+        </div>
+        <h3 class="fw-bold mb-1">ЦОПП — Система сбора отчетов и статистики</h3>
+        <p class="text-white-50 mb-0">Сервер успешно запущен. Требуется инициализация базы данных для начала работы.</p>
+    </div>
+
+    <div class="setup-body">
+        <div id="globalAlert" class="alert d-none mb-4" role="alert"></div>
+
+        <div class="row g-4">
+            <!-- ВАРИАНТ 1: ЗАГРУЗКА БЭКАПА -->
+            <div class="col-lg-7">
+                <div class="option-box primary-option">
+                    <div class="d-flex align-items-center gap-2 mb-2 text-dark">
+                        <i class="bi bi-cloud-arrow-up fs-4" style="color: var(--copp-primary);"></i>
+                        <h5 class="fw-bold mb-0">Восстановить из бэкапа</h5>
+                        <span class="badge ms-auto text-white" style="background-color: var(--copp-primary);">Рекомендуется</span>
+                    </div>
+                    <p class="text-muted small mb-3">
+                        Загрузите файл <code>.zip</code> (полный бэкап с базой данных и файлами) или файл <code>.sqlite</code> / <code>.db</code> (только база данных).
+                    </p>
+
+                    <div class="file-dropzone mb-3" onclick="document.getElementById('backupFile').click()">
+                        <i class="bi bi-file-earmark-zip fs-1 text-secondary mb-2 d-block"></i>
+                        <div class="fw-semibold text-dark" id="fileNameDisplay">Нажмите для выбора архива или файла БД</div>
+                        <div class="text-muted small mt-1">Поддерживаются .zip, .sqlite, .db</div>
+                    </div>
+                    <input type="file" id="backupFile" class="d-none" accept=".zip,.sqlite,.db,.sqlite3" onchange="onFileSelected(this)">
+
+                    <div id="uploadProgressBox" class="progress-box">
+                        <div class="d-flex justify-content-between small text-muted mb-1">
+                            <span id="uploadStatusText">Загрузка файла...</span>
+                            <span id="uploadPercentText" class="fw-bold">0%</span>
+                        </div>
+                        <div class="progress" style="height: 10px;">
+                            <div id="uploadProgressBar" class="progress-bar progress-bar-striped progress-bar-animated" style="background-color: var(--copp-primary); width: 0%;"></div>
+                        </div>
+                        <div class="text-muted small mt-2" id="uploadDetailText"></div>
+                    </div>
+
+                    <div class="mt-auto pt-3">
+                        <button type="button" class="btn btn-copp w-100" id="btnUpload" onclick="startBackupUpload()" disabled>
+                            <i class="bi bi-play-fill me-1"></i> Применить бэкап и запустить систему
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ВАРИАНТ 2: ЧИСТЫЙ СТАРТ -->
+            <div class="col-lg-5">
+                <div class="option-box">
+                    <div class="d-flex align-items-center gap-2 mb-2 text-dark">
+                        <i class="bi bi-database-add fs-4 text-secondary"></i>
+                        <h5 class="fw-bold mb-0">Чистый запуск</h5>
+                    </div>
+                    <p class="text-muted small mb-3">
+                        Создать новую чистую базу данных со всеми таблицами и стандартным пользователем администратора.
+                    </p>
+
+                    <div class="p-3 bg-light rounded small text-muted mb-3 border">
+                        <div class="mb-1"><i class="bi bi-person-badge me-1"></i><strong>Логин:</strong> <code>admin</code></div>
+                        <div><i class="bi bi-key me-1"></i><strong>Пароль:</strong> <code>admin123</code></div>
+                    </div>
+
+                    <div class="mt-auto pt-3">
+                        <button type="button" class="btn btn-outline-secondary w-100" id="btnInitClean" onclick="startCleanInit()">
+                            <i class="bi bi-plus-circle me-1"></i> Создать чистую базу
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let selectedFile = null;
+
+function onFileSelected(input) {
+    if (input.files && input.files[0]) {
+        selectedFile = input.files[0];
+        const sizeMb = (selectedFile.size / (1024 * 1024)).toFixed(1);
+        document.getElementById('fileNameDisplay').innerHTML = `<strong>${selectedFile.name}</strong> (${sizeMb} МБ)`;
+        document.getElementById('btnUpload').disabled = false;
+    }
+}
+
+function showAlert(message, type = 'danger') {
+    const el = document.getElementById('globalAlert');
+    el.className = `alert alert-${type}`;
+    el.innerHTML = message;
+    el.classList.remove('d-none');
+}
+
+function startBackupUpload() {
+    if (!selectedFile) return;
+
+    const btnUpload = document.getElementById('btnUpload');
+    const btnClean = document.getElementById('btnInitClean');
+    const pBox = document.getElementById('uploadProgressBox');
+    const pBar = document.getElementById('uploadProgressBar');
+    const statusText = document.getElementById('uploadStatusText');
+    const percentText = document.getElementById('uploadPercentText');
+    const detailText = document.getElementById('uploadDetailText');
+
+    btnUpload.disabled = true;
+    if (btnClean) btnClean.disabled = true;
+    pBox.style.display = 'block';
+
+    const formData = new FormData();
+    formData.append('backup_file', selectedFile);
+
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '{{ url_for("setup.upload") }}', true);
+    xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+
+    const startTime = Date.now();
+
+    xhr.upload.onprogress = function(e) {
+        if (e.lengthComputable) {
+            const percent = Math.round((e.loaded / e.total) * 100);
+            pBar.style.width = percent + '%';
+            percentText.innerText = percent + '%';
+
+            const loadedMb = (e.loaded / (1024 * 1024)).toFixed(1);
+            const totalMb = (e.total / (1024 * 1024)).toFixed(1);
+            const elapsed = (Date.now() - startTime) / 1000;
+            const speed = elapsed > 0 ? (e.loaded / 1024 / 1024 / elapsed).toFixed(1) : '0';
+
+            detailText.innerText = `${loadedMb} / ${totalMb} МБ (${speed} МБ/с)`;
+
+            if (percent >= 100) {
+                statusText.innerText = 'Файл передан. Идет проверка и применение базы данных...';
+                detailText.innerText = 'Пожалуйста, не закрывайте страницу...';
+            }
+        }
+    };
+
+    xhr.onload = function() {
+        if (xhr.status === 200) {
+            let res = {};
+            try { res = JSON.parse(xhr.responseText); } catch(e) {}
+            statusText.innerText = 'Успешно!';
+            pBar.className = 'progress-bar bg-success';
+            showAlert('База данных успешно установлена! Перенаправление...', 'success');
+            setTimeout(() => {
+                window.location.href = res.redirect || '{{ url_for("auth.login") }}';
+            }, 1200);
+        } else {
+            let msg = 'Произошла ошибка при загрузке';
+            try {
+                const res = JSON.parse(xhr.responseText);
+                if (res.message) msg = res.message;
+            } catch(e) {}
+            btnUpload.disabled = false;
+            if (btnClean) btnClean.disabled = false;
+            pBox.style.display = 'none';
+            showAlert(msg, 'danger');
+        }
+    };
+
+    xhr.onerror = function() {
+        btnUpload.disabled = false;
+        if (btnClean) btnClean.disabled = false;
+        pBox.style.display = 'none';
+        showAlert('Сетевая ошибка или сброс соединения веб-сервером', 'danger');
+    };
+
+    xhr.send(formData);
+}
+
+function startCleanInit() {
+    if (!confirm('Инициализировать новую пустую базу данных ЦОПП?')) return;
+
+    const btn = document.getElementById('btnInitClean');
+    const btnUpload = document.getElementById('btnUpload');
+    btn.disabled = true;
+    if (btnUpload) btnUpload.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span> Создание...';
+
+    fetch('{{ url_for("setup.init_clean") }}', {
+        method: 'POST',
+        headers: { 'X-Requested-With': 'XMLHttpRequest' }
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            showAlert('База данных успешно создана! Перенаправление в панель входа...', 'success');
+            setTimeout(() => {
+                window.location.href = data.redirect || '{{ url_for("auth.login") }}';
+            }, 1200);
+        } else {
+            btn.disabled = false;
+            if (btnUpload && selectedFile) btnUpload.disabled = false;
+            btn.innerHTML = '<i class="bi bi-plus-circle me-1"></i> Создать чистую базу';
+            showAlert(data.message || 'Ошибка инициализации', 'danger');
+        }
+    })
+    .catch(err => {
+        btn.disabled = false;
+        if (btnUpload && selectedFile) btnUpload.disabled = false;
+        btn.innerHTML = '<i class="bi bi-plus-circle me-1"></i> Создать чистую базу';
+        showAlert('Сетевая ошибка: ' + err, 'danger');
+    });
+}
+</script>
+
+</body>
+</html>

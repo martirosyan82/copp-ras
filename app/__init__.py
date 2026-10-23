@@ -5,15 +5,17 @@ app/__init__.py
 Здесь только:
   - создание экземпляра Flask
   - подключение расширений из app.extensions
-  - регистрация блюпринтов
+  - регистрация блюпринтов (включая setup для Zero-DB)
   - регистрация Jinja2-фильтров и security-хуков
 
 Все экземпляры расширений (db, login_manager, ...) — в app/extensions.py
 Все модели БД — в app/models/
 """
 from flask import Flask
+from werkzeug.middleware.proxy_fix import ProxyFix
 from config import Config
 from app.extensions import db, migrate, login_manager, csrf, limiter
+from app.services.setup_service import is_db_ready
 
 
 def create_app(config_class: type = Config) -> Flask:
@@ -26,6 +28,9 @@ def create_app(config_class: type = Config) -> Flask:
     app = Flask(__name__)
     app.config.from_object(config_class)
 
+    # Настройка ProxyFix для корректной работы за Nginx реверс-прокси
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+
     # ── Расширения ────────────────────────────────────────────────────────────
     db.init_app(app)
     migrate.init_app(app, db)
@@ -33,20 +38,30 @@ def create_app(config_class: type = Config) -> Flask:
     csrf.init_app(app)
     limiter.init_app(app)
 
-    with app.app_context():
-        from app import models  # noqa: F401 — регистрирует модели в SQLAlchemy
-        db.create_all()
-        # Автоматическая миграция новых колонок для существующих БД
-        try:
-            from sqlalchemy import inspect, text
-            inspector = inspect(db.engine)
-            if 'users' in inspector.get_table_names():
-                cols = [c['name'] for c in inspector.get_columns('users')]
-                if 'subgroup' not in cols:
-                    db.session.execute(text("ALTER TABLE users ADD COLUMN subgroup VARCHAR(100)"))
-                    db.session.commit()
-        except Exception:
-            pass
+    # Автоматическая миграция новых колонок для существующих БД только если БД готова
+    if is_db_ready(app):
+        with app.app_context():
+            from app import models  # noqa: F401 — регистрирует модели в SQLAlchemy
+            try:
+                from sqlalchemy import inspect, text
+                inspector = inspect(db.engine)
+                if 'users' in inspector.get_table_names():
+                    cols = [c['name'] for c in inspector.get_columns('users')]
+                    if 'subgroup' not in cols:
+                        db.session.execute(text("ALTER TABLE users ADD COLUMN subgroup VARCHAR(100)"))
+                        db.session.commit()
+            except Exception:
+                pass
+
+    # ── Проверка инициализации БД (Zero-DB режим) ──────────────────────────────
+    @app.before_request
+    def check_db_initialization():
+        from flask import request, redirect, url_for
+        # Статические файлы и страницы мастера первоначальной настройки всегда доступны
+        if request.endpoint == 'static' or (request.path and (request.path.startswith('/static') or request.path.startswith('/setup'))):
+            return None
+        if not is_db_ready():
+            return redirect(url_for('setup.index'))
 
     # ── Проверка срока жизни сессии (24 часа) ──────────────────────────────────
     @app.before_request
@@ -55,8 +70,8 @@ def create_app(config_class: type = Config) -> Flask:
         from flask_login import current_user, logout_user
         import time
 
-        # Статические файлы, вход и выход пропускаем
-        if request.endpoint == 'static' or (request.path and request.path.startswith('/static/')):
+        # Статические файлы, мастер настройки, вход и выход пропускаем
+        if request.endpoint == 'static' or (request.path and (request.path.startswith('/static/') or request.path.startswith('/setup'))):
             return
         if request.endpoint in ['auth.login', 'auth.logout'] or (request.path and request.path.startswith('/auth/')):
             return
@@ -118,8 +133,12 @@ def create_app(config_class: type = Config) -> Flask:
         from flask_login import current_user
         from app.services.maintenance import get_maintenance_status
 
-        # Статические файлы всегда доступны
-        if request.endpoint == 'static' or (request.path and request.path.startswith('/static/')):
+        # Статические файлы и мастер настройки всегда доступны
+        if request.endpoint == 'static' or (request.path and (request.path.startswith('/static/') or request.path.startswith('/setup'))):
+            return
+
+        # Если БД еще не готова, проверка техработ не выполняется (перенаправляет check_db_initialization)
+        if not is_db_ready():
             return
 
         # Авторизованный администратор имеет полный доступ
@@ -167,9 +186,10 @@ def create_app(config_class: type = Config) -> Flask:
     def inject_global_data() -> dict:
         """Прокидывает конфиг и статус техработ в каждый шаблон."""
         from app.services.maintenance import get_maintenance_status
+        m_status = get_maintenance_status() if is_db_ready() else {'in_maintenance': False}
         return dict(
             config=app.config,
-            maintenance_status=get_maintenance_status()
+            maintenance_status=m_status
         )
 
     # ── Jinja2 Filters ────────────────────────────────────────────────────────
@@ -215,7 +235,12 @@ def create_app(config_class: type = Config) -> Flask:
     from app.auth.routes import auth_bp
     from app.admin import admin_bp
     from app.reports import reports_bp
+    from app.setup import bp as setup_bp
 
+    # Мастер настройки освобождаем от CSRF для первоначальной загрузки файлов
+    csrf.exempt(setup_bp)
+
+    app.register_blueprint(setup_bp, url_prefix='/setup')
     app.register_blueprint(auth_bp, url_prefix='/auth')
     app.register_blueprint(admin_bp, url_prefix='/admin')
     app.register_blueprint(reports_bp, url_prefix='/')
