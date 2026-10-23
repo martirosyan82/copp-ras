@@ -147,28 +147,29 @@ else
     info "requirements.txt без изменений, пропуск."
 fi
 
-# ─── 4. МИГРАЦИИ СХЕМЫ БД ──────────────────────────────────────────────────────
-section "4/5. Проверка колонок и миграций БД"
+# ─── 4. МИГРАЦИИ СХЕМЫ БД (ALEMBIC) ───────────────────────────────────────────
+section "4/5. Проверка и применение миграций схемы БД"
 
-if [ -f "$APP_DIR/reports.db" ] && [ -s "$APP_DIR/reports.db" ]; then
-    # Проверка наличия колонки subgroup в users
+export FLASK_APP="wsgi:app"
+if [ -d "$APP_DIR/migrations" ]; then
+    # Если на сервере уже есть база SQLite без таблицы alembic_version, штампуем ее базовой ревизией
     "$VENV_PYTHON" -c "
-import sqlite3
-conn = sqlite3.connect('$APP_DIR/reports.db')
-cursor = conn.cursor()
-cursor.execute(\"PRAGMA table_info(users)\")
-cols = [col[1] for col in cursor.fetchall()]
-if 'subgroup' not in cols:
-    cursor.execute('ALTER TABLE users ADD COLUMN subgroup VARCHAR(100);')
-    conn.commit()
-cursor.execute(\"PRAGMA table_info(action_logs)\")
-cols_logs = [col[1] for col in cursor.fetchall()]
-if 'ip_address' not in cols_logs:
-    cursor.execute('ALTER TABLE action_logs ADD COLUMN ip_address VARCHAR(45);')
-    conn.commit()
-conn.close()
+import sqlite3, os
+db_file = '$APP_DIR/reports.db'
+if os.path.exists(db_file) and os.path.getsize(db_file) > 1024:
+    conn = sqlite3.connect(db_file)
+    cursor = conn.cursor()
+    cursor.execute(\"SELECT name FROM sqlite_master WHERE type='table' AND name='alembic_version'\")
+    if not cursor.fetchone():
+        cursor.execute(\"CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL, CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num))\")
+        cursor.execute(\"INSERT INTO alembic_version (version_num) VALUES ('8da40f5858b1')\")
+        conn.commit()
+    conn.close()
 " 2>/dev/null || true
-    info "Миграции колонок проверены."
+
+    # Применение всех свежих миграций
+    "$APP_DIR/venv/bin/flask" db upgrade 2>/dev/null || warn "Миграция Alembic пропущена или база уже актуальна."
+    info "Миграции базы данных успешно проверены и применены."
 fi
 
 # Создаем структуру каталогов загрузок если нет

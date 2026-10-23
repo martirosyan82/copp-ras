@@ -10,3 +10,4 @@ Flask-Limiter
 Flask-Migrate
 gunicorn
 python-dotenv
+psycopg2-binary

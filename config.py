@@ -30,11 +30,27 @@ class Config:
             logging.warning("SECRET_KEY not set in env. Generated and saved to .secret_key")
 
     # ── Database ─────────────────────────────────────────────────────────────
+    raw_db_url = os.environ.get('DATABASE_URL')
+    if raw_db_url and raw_db_url.startswith('postgres://'):
+        raw_db_url = raw_db_url.replace('postgres://', 'postgresql://', 1)
+
     SQLALCHEMY_DATABASE_URI = (
-        os.environ.get('DATABASE_URL')
+        raw_db_url
         or 'sqlite:///' + os.path.join(basedir, 'reports.db')
     )
     SQLALCHEMY_TRACK_MODIFICATIONS = False
+
+    # Пул соединений для PostgreSQL и автопроверка живых соединений
+    SQLALCHEMY_ENGINE_OPTIONS = {
+        'pool_pre_ping': True,
+        'pool_recycle': 1800,
+    }
+    if raw_db_url and 'sqlite' not in raw_db_url:
+        SQLALCHEMY_ENGINE_OPTIONS.update({
+            'pool_size': 15,
+            'max_overflow': 25,
+            'pool_timeout': 30,
+        })
 
     # ── Session & Cookie Security ─────────────────────────────────────────────
     PERMANENT_SESSION_LIFETIME = timedelta(hours=24)
