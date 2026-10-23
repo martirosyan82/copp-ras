@@ -135,9 +135,9 @@ fi
 chown "$APP_USER":"$APP_USER" "$APP_DIR/.env"
 chmod 600 "$APP_DIR/.env"
 
-# Установка драйвера psycopg2 в venv
-info "Устанавливаю psycopg2-binary в venv..."
-"$APP_DIR/venv/bin/pip" install psycopg2-binary --quiet
+# Установка драйверов PostgreSQL в venv (psycopg v3 и psycopg2)
+info "Устанавливаю драйверы PostgreSQL (psycopg, psycopg2) в venv..."
+"$APP_DIR/venv/bin/pip" install "psycopg[binary]" psycopg2-binary --quiet
 
 # Создание всех таблиц в PostgreSQL через Alembic
 info "Развертываю структуру таблиц в PostgreSQL..."

@@ -141,7 +141,7 @@ if [ "$OLD_COMMIT" != "$NEW_COMMIT" ] && git diff --name-only "$OLD_COMMIT" "$NE
     info "requirements.txt изменился — обновляю пакеты..."
     "$VENV_PIP" install --upgrade pip --quiet
     "$VENV_PIP" install -r "$APP_DIR/requirements.txt" --quiet
-    "$VENV_PIP" install gunicorn python-dotenv --quiet
+    "$VENV_PIP" install gunicorn python-dotenv "psycopg[binary]" psycopg2-binary --quiet
     info "Пакеты успешно обновлены."
 else
     info "requirements.txt без изменений, пропуск."
