@@ -179,12 +179,27 @@ def migrate_data(sqlite_path=None, pg_url=None):
     metadata = MetaData()
     metadata.reflect(bind=pg_engine)
 
+    # Каскадная очистка всех таблиц перед переносом
+    try:
+        with pg_engine.begin() as clean_conn:
+            existing_tables = [f'"{t}"' for t in reversed(TABLE_ORDER) if t in pg_tables]
+            if existing_tables:
+                clean_conn.execute(text(f"TRUNCATE TABLE {', '.join(existing_tables)} CASCADE;"))
+    except Exception as e:
+        print(f"  [ИНФО] Очистка таблиц через DELETE: {e}")
+
     total_records = 0
 
     # 3. Перенос данных таблица за таблицей
     print("\nНачинаю перенос данных:\n")
 
     with pg_engine.begin() as pg_conn:
+        # Отключаем проверку внешних ключей на время массовой вставки
+        try:
+            pg_conn.execute(text("SET session_replication_role = 'replica';"))
+        except Exception:
+            pass
+
         for table_name in TABLE_ORDER:
             if table_name not in sqlite_tables or table_name not in pg_tables:
                 continue
@@ -209,13 +224,16 @@ def migrate_data(sqlite_path=None, pg_url=None):
                         rec[k] = parse_val(table_name, k, r[k])
                 prepared_records.append(rec)
 
-            # Очищаем таблицу в Postgres перед заливкой
-            pg_conn.execute(target_table.delete())
-
             # Пакетная вставка
             pg_conn.execute(target_table.insert(), prepared_records)
             total_records += row_count
             print(f"  [OK] {table_name:<22} перенесено: {row_count:>5} строк")
+
+        # Включаем проверку внешних ключей обратно
+        try:
+            pg_conn.execute(text("SET session_replication_role = 'origin';"))
+        except Exception:
+            pass
 
         # 4. Обновление sequence (автоинкрементов) для таблиц с полем id
         print("\nОбновление системных автоинкрементов (Sequences) в PostgreSQL...")
